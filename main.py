@@ -1,5 +1,7 @@
 import flet as ft
 import os
+import threading
+import time
 from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -16,10 +18,10 @@ IMMUTABLE_DIRECTIVES = """
 def load_system_prompt():
     personality_file = "personality.txt"
     if not os.path.exists(personality_file):
-        with open(personality_file, "w") as f:
+        with open(personality_file, "w", encoding="utf-8") as f:
             f.write("Name: Astrl\nTone: Upbeat, witty, bubbly, and slightly quirky like a playful Jarvis.\nStyle: Concise, technical, and eager to assist without being robotic.")
     
-    with open(personality_file, "r") as f:
+    with open(personality_file, "r", encoding="utf-8") as f:
         user_personality = f.read().strip()
 
     return f"{IMMUTABLE_DIRECTIVES}\n\n[USER-DEFINED PERSONALITY]\n{user_personality}"
@@ -27,14 +29,14 @@ def load_system_prompt():
 def load_memory():
     memory_file = "memory.txt"
     if not os.path.exists(memory_file):
-        open(memory_file, "w").close()
+        open(memory_file, "w", encoding="utf-8").close()
         
-    with open(memory_file, "r") as f:
+    with open(memory_file, "r", encoding="utf-8") as f:
         content = f.read()
         return content[-2500:] if len(content) > 2500 else content
 
 def save_to_memory(role, text):
-    with open("memory.txt", "a") as f:
+    with open("memory.txt", "a", encoding="utf-8") as f:
         f.write(f"{role}: {text}\n")
 
 # --- 3. THE DESKTOP UI & AI LOOP ---
@@ -69,43 +71,56 @@ def main(page: ft.Page):
         save_to_memory("User", msg)
         page.update()
         
-        sys_prompt = load_system_prompt()
-        past_context = load_memory()
-        
         # Thinking indicator
         thinking_text = ft.Text("Astrl is thinking...", color=ft.Colors.GREY_500, italic=True)
         chat_history.controls.append(ft.Row([thinking_text]))
         page.update()
         
-        messages = [
-            SystemMessage(content=f"{sys_prompt}\n\n[PAST CONVERSATION LOG]\n{past_context}"),
-            HumanMessage(content=msg)
-        ]
-        
-        try:
-            response = llm.invoke(messages)
-            bot_reply = response.content
-        except Exception as ex:
-            bot_reply = f"System Error: Could not connect to Ollama. Make sure the server is running."
+        # Background AI Thread
+        def get_ai_response():
+            sys_prompt = load_system_prompt()
+            past_context = load_memory()
             
-        chat_history.controls.remove(chat_history.controls[-1])
-        chat_history.controls.append(
-            ft.Row([ft.Text(f"Astrl: {bot_reply}", color=ft.Colors.GREEN_300, selectable=True, width=350)], alignment=ft.MainAxisAlignment.START)
-        )
-        save_to_memory("Astrl", bot_reply)
-        page.update()
+            messages = [
+                SystemMessage(content=f"{sys_prompt}\n\n[PAST CONVERSATION LOG]\n{past_context}"),
+                HumanMessage(content=msg)
+            ]
+            
+            start_time = time.time()
+            
+            try:
+                response = llm.invoke(messages)
+                bot_reply = response.content
+            except Exception as ex:
+                bot_reply = f"System Error: Could not connect to Ollama. Make sure the server is running."
+            
+            elapsed_time = round(time.time() - start_time, 2)
+                
+            chat_history.controls.remove(chat_history.controls[-1])
+            
+            time_label = ft.Text(f"Generated in {elapsed_time}s", color=ft.Colors.GREY_600, size=11, italic=True)
+            bot_text = ft.Text(f"Astrl: {bot_reply}", color=ft.Colors.GREEN_300, selectable=True, width=350)
+            
+            chat_history.controls.append(
+                ft.Row([
+                    ft.Column([time_label, bot_text], spacing=2)
+                ], alignment=ft.MainAxisAlignment.START)
+            )
+            
+            save_to_memory("Astrl", bot_reply)
+            page.update()
+            
+        threading.Thread(target=get_ai_response, daemon=True).start()
 
     user_input.on_submit = send_message
     
-    # Explicitly styled button that will render cleanly next to the input field
     send_button = ft.ElevatedButton(
-        text="Send", 
+        "Send", 
         on_click=send_message,
         color=ft.Colors.WHITE,
         bgcolor=ft.Colors.BLUE_600
     )
     
-    # Container wrapping the input row with padding so it looks polished
     input_row = ft.Row(
         controls=[user_input, send_button],
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN
@@ -114,4 +129,4 @@ def main(page: ft.Page):
     page.add(chat_history, input_row)
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
