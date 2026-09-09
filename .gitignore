@@ -1,0 +1,5 @@
+venv/
+memory.txt
+__pycache__/
+*.pyc
+.flet/
